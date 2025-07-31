@@ -4,6 +4,7 @@
 #include <linux/if_ether.h>  // struct ethhdr, ETH_P_IP
 #include <linux/ip.h>        // struct iphdr, IPPROTO_UDP
 #include <linux/udp.h>       // struct udphdr
+#include <bpf/bpf_endian.h>
 
 #ifndef IPPROTO_UDP
 #define IPPROTO_UDP 17
@@ -12,6 +13,7 @@
 #define UDP_PORT_PGW_REG 3000
 #define UDP_PORT 2152
 #define MAX_LENGTH__PGW_INSTANCE 4
+
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
@@ -38,6 +40,7 @@ struct pgw__config {
     __u32 ipv4_addr;
     __u16 port;
     __u16 reserved;
+    __u64 pkt_count;
     __u64 last_used;
     __u64 last_seen;
 };
@@ -49,7 +52,6 @@ struct {
     __type(value, struct pgw__config);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } pgw__instances_list_map SEC(".maps");
-
 
 
 static __always_inline int register_pgw(__u32 weight, __u32 ipv4_addr, __u16 port) {
@@ -65,12 +67,46 @@ static __always_inline int register_pgw(__u32 weight, __u32 ipv4_addr, __u16 por
             conf->weight = weight;
             conf->ipv4_addr = ipv4_addr;
             conf->port = port;
+            conf->pkt_count = 0;
             conf->last_used = 9999;
+            conf->last_seen = 9999;
             return i; // success
         }
     }
 
     return -1; // no free slot found
+}
+
+static __always_inline int select_pgw_instance(void) {
+    int best_index = -1;
+    __u64 best_pkt = 0;
+    __u64 best_weight = 1; // avoid div-by-zero
+    __u64 best_last_used = ~0ULL;
+
+#pragma unroll
+    for (int i = 0; i < MAX_LENGTH__PGW_INSTANCE; i++) {
+        __u32 key = i;
+        struct pgw__config *conf = bpf_map_lookup_elem(&pgw__instances_list_map, &key);
+        if (!conf || conf->ipv4_addr == 0)
+            continue;
+
+        if (conf->pkt_count == 0)
+            return i;
+
+        __u64 pkt = conf->pkt_count;
+        __u64 weight = conf->weight == 0 ? 1 : conf->weight;
+        // ratio = conf->pkt_count / conf->weight;
+        if (best_index == -1 ||
+            (pkt * best_weight < best_pkt * weight) ||
+            (pkt * best_weight == best_pkt * weight && conf->last_used < best_last_used)) {
+            best_index = i;
+            best_pkt = pkt;
+            best_weight = weight;
+            best_last_used = conf->last_used;
+        }
+    }
+
+    return best_index;
 }
 
 SEC("xdp")
@@ -123,7 +159,29 @@ int xdp_udp_counter(struct xdp_md *ctx) {
     if (value)
         __sync_fetch_and_add(value, 1);
 
-    // bpf_printk("UDP packet to port %d received\n", UDP_PORT);
+    int selected_pgw_id = select_pgw_instance() ;
+    if (selected_pgw_id < 0) {
+        bpf_printk("Couldn't find best pgw: %d\n", select_pgw_instance);
+        return XDP_ABORTED;
+    }
+    struct pgw__config *target_conf = bpf_map_lookup_elem(&pgw__instances_list_map, &selected_pgw_id);
+    if (!target_conf) {
+        return XDP_ABORTED;
+    }
+
+    /* Change UDP destination and source. No changes on IP header. */
+    __u32 csum = (__u32)~bpf_ntohs(udp->check);
+    csum += (__u32)~bpf_ntohs(udp->source) + UDP_PORT_PGW_REG;
+    csum += (__u32)~bpf_ntohs(udp->dest) + bpf_ntohs(target_conf->port);
+    csum = (csum & 0xFFFF) + (csum >> 16);
+    csum = (csum & 0xFFFF) + (csum >> 16);
+    udp->check = bpf_htons((__u16)~csum);
+    udp->source = bpf_htons(UDP_PORT_PGW_REG);
+    udp->dest   = target_conf->port;
+
+    /* Update gw stat */
+    target_conf->pkt_count++;
+    target_conf->last_used = bpf_ktime_get_ns();
 
     return XDP_PASS;
 }
