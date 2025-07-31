@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Before use: chmod +x runme
+
+set -e
+
+# Check at least one argument is provided
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 {xdp on|xdp off|pin clear|test}"
+    exit 1
+fi
+
+case "$1" in
+  xdp)
+    case "$2" in
+      on)
+        echo "Attaching XDP program..."
+        sudo ip link set dev lo xdp obj udp_count_kern.o sec xdp
+        ;;
+      off)
+        echo "Detaching XDP program..."
+        sudo ip link set dev lo xdp off
+        ;;
+      b)
+        echo "Building XDP program..."
+        clang -O2 -g -Wall -target bpf -c udp_count_kern.c -o udp_count_kern.o
+        ;;
+      *)
+        echo "Usage: $0 xdp {on|off}"
+        exit 1
+        ;;
+    esac
+    ;;
+  pin)
+    case "$2" in
+      clear)
+        echo "Clearing pinned BPF maps..."
+        sudo rm /sys/fs/bpf/tc/globals/pgw__udp_count_map /sys/fs/bpf/tc/globals/pgw__instances_list_map
+        ;;
+      *)
+        echo "Usage: $0 pin clear"
+        exit 1
+        ;;
+    esac
+    ;;
+  test)
+    echo "Detaching XDP program..."
+    sudo ip link set dev lo xdp off
+    echo "Clearing pinned BPF maps..."
+    sudo rm /sys/fs/bpf/tc/globals/pgw__udp_count_map /sys/fs/bpf/tc/globals/pgw__instances_list_map || true  # ignore if no pinned maps
+    echo "Building XDP program..."
+    clang -O2 -g -Wall -target bpf -c udp_count_kern.c -o udp_count_kern.o
+    echo "Attaching XDP program..."
+    sudo ip link set dev lo xdp obj udp_count_kern.o sec xdp
+    ;;
+  *)
+    echo "Unknown command: $1"
+    echo "Usage: $0 {xdp on|xdp off|pin clear}"
+    exit 1
+    ;;
+esac
