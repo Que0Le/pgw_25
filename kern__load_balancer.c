@@ -84,7 +84,8 @@ static __always_inline int select_pgw_instance(void) {
     __u64 best_last_used = ~0ULL;
 
 #pragma unroll
-    for (int i = 0; i < MAX_LENGTH__PGW_INSTANCE; i++) {
+    for (int i = 0; i < MAX_LENGTH__PGW_INSTANCE; i++)
+    {
         __u32 key = i;
         struct pgw__config *conf = bpf_map_lookup_elem(&pgw__instances_list_map, &key);
         if (!conf || conf->ipv4_addr == 0)
@@ -98,7 +99,8 @@ static __always_inline int select_pgw_instance(void) {
         // ratio = conf->pkt_count / conf->weight;
         if (best_index == -1 ||
             (pkt * best_weight < best_pkt * weight) ||
-            (pkt * best_weight == best_pkt * weight && conf->last_used < best_last_used)) {
+            (pkt * best_weight == best_pkt * weight && conf->last_used < best_last_used))
+        {
             best_index = i;
             best_pkt = pkt;
             best_weight = weight;
@@ -169,7 +171,10 @@ int xdp_udp_counter(struct xdp_md *ctx) {
         return XDP_ABORTED;
     }
 
-    /* Change UDP destination and source. No changes on IP header. */
+    /* 
+     *Change UDP destination and source. No changes on IP header. 
+     * Copied from ChatGPT
+     */
     __u32 csum = (__u32)~bpf_ntohs(udp->check);
     csum += (__u32)~bpf_ntohs(udp->source) + UDP_PORT_PGW_REG;
     csum += (__u32)~bpf_ntohs(udp->dest) + bpf_ntohs(target_conf->port);

@@ -15,7 +15,7 @@ case "$1" in
     case "$2" in
       on)
         echo "Attaching XDP program..."
-        sudo ip link set dev lo xdp obj udp_count_kern.o sec xdp
+        sudo ip link set dev lo xdp obj kern__load_balancer.o sec xdp
         ;;
       off)
         echo "Detaching XDP program..."
@@ -23,7 +23,7 @@ case "$1" in
         ;;
       b)
         echo "Building XDP program..."
-        clang -O2 -g -Wall -target bpf -c udp_count_kern.c -o udp_count_kern.o
+        clang -O2 -g -Wall -target bpf -c kern__load_balancer.c -o udp_cokern__load_balancerunt_kern.o
         ;;
       *)
         echo "Usage: $0 xdp {on|off}"
@@ -49,9 +49,9 @@ case "$1" in
     echo "Clearing pinned BPF maps..."
     sudo rm /sys/fs/bpf/tc/globals/pgw__udp_count_map /sys/fs/bpf/tc/globals/pgw__instances_list_map || true  # ignore if no pinned maps
     echo "Building XDP program..."
-    clang -O2 -g -Wall -target bpf -c udp_count_kern.c -o udp_count_kern.o
+    clang -O2 -g -Wall -target bpf -c kern__load_balancer.c -o kern__load_balancer.o
     echo "Attaching XDP program..."
-    sudo ip link set dev lo xdp obj udp_count_kern.o sec xdp
+    sudo ip link set dev lo xdp obj kern__load_balancer.o sec xdp
     ;;
   *)
     echo "Unknown command: $1"
