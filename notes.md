@@ -80,7 +80,7 @@ More details of the design. The tunnel bypasses most of the network stack.
 </div>
 
 
-### XDP program
+## XDP program
 OS: Ubuntu 24 LTS, kernel 6.11.
 
 Dependencies: https://github.com/xdp-project/xdp-tutorial/blob/main/setup_dependencies.org
@@ -104,7 +104,7 @@ sudo ip link set dev lo xdp off
 sudo rm /sys/fs/bpf/tc/globals/pgw__udp_count_map /sys/fs/bpf/tc/globals/pgw__instances_list_map
 ```
 
-### Mnitor the config map from user-space
+## Monitor the config map from user-space
 ```bash
 # raw
 sudo bpftool map dump pinned /sys/fs/bpf/tc/globals/pgw__instances_list_map
@@ -131,7 +131,7 @@ python3 parse_pgw_instances_map.py
 # ID: 0, Weight: 0, IP: 0.0.0.0, Port: 0, pkt_count: 0, Last Used: 0, last_seen: 0
 ```
 
-DUMP
+## DUMP
 
 ```bash
 
