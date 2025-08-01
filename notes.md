@@ -8,7 +8,7 @@ After registration, contact data of PGWs are stored in ``pgw__instances_list_map
 
 A quick test: `./runme test && ./ldtest -msgNum 100000 -msgRate 1000000 -sgwNum 10 -pgw-weights "11,23,37,41,53,73"`
 
-<video src="demo.mp4" width="90%" controls></video>
+<video src="./demo.mp4" width="90%" controls></video>
 
 ## Known problems
 - What Worked:
