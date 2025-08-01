@@ -12,8 +12,9 @@
 
 #define UDP_PORT_PGW_REG 3000
 #define UDP_PORT 2152
-#define MAX_LENGTH__PGW_INSTANCE 4
+#define MAX_LENGTH__PGW_INSTANCE 8
 
+/* Counting map */
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
@@ -22,24 +23,12 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } pgw__udp_count_map SEC(".maps");
 
-/**
- * COnfig map for the PGW.
- * Index 0: number of PGW instances
- * Index 1:
- */
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 4);
-    __type(key, __u32);
-    __type(value, __u32);
-} pgw__config_map SEC(".maps");
-
 struct pgw__config {
-    __u32 id;
+    __u32 id;           // usually just index in the array
     __u32 weight;
     __u32 ipv4_addr;
     __u16 port;
-    __u16 reserved;
+    __u16 reserved;     // reserved mem. ALso for (not sure) minimizing padding for last 16bytes.
     __u64 pkt_count;
     __u64 last_used;
     __u64 last_seen;
@@ -47,13 +36,17 @@ struct pgw__config {
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 4);
+    __uint(max_entries, MAX_LENGTH__PGW_INSTANCE);
     __type(key, __u32);
     __type(value, struct pgw__config);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } pgw__instances_list_map SEC(".maps");
 
-
+/**
+ * Register a gateway.
+ * Add contact data of gateway to the instances list.
+ * Timestamps and count are set to default.
+ */
 static __always_inline int register_pgw(__u32 weight, __u32 ipv4_addr, __u16 port) {
 #pragma unroll
     for (int i = 0; i < MAX_LENGTH__PGW_INSTANCE; i++) {
@@ -69,7 +62,7 @@ static __always_inline int register_pgw(__u32 weight, __u32 ipv4_addr, __u16 por
             conf->port = port;
             conf->pkt_count = 0;
             conf->last_used = 9999;
-            conf->last_seen = 9999;
+            conf->last_seen = bpf_ktime_get_ns();
             return i; // success
         }
     }
@@ -77,6 +70,14 @@ static __always_inline int register_pgw(__u32 weight, __u32 ipv4_addr, __u16 por
     return -1; // no free slot found
 }
 
+/**
+ * Calculate index of next best gateway candidate for sending this packet.
+ * This is a naive function with the following criterions:
+ * - CHeck from the head of the array. Item with empt iphdr is treated as invalid. 
+ * - A valid gateway with count == 0 will end the search.
+ * - Pick the gw with lowest <count / weight>. 
+ * - Prefer gw with oldest last_used (gw that has been idle the longest)
+ */
 static __always_inline int select_pgw_instance(void) {
     int best_index = -1;
     __u64 best_pkt = 0;
@@ -95,10 +96,12 @@ static __always_inline int select_pgw_instance(void) {
             return i;
 
         __u64 pkt = conf->pkt_count;
-        __u64 weight = conf->weight == 0 ? 1 : conf->weight;
-        // ratio = conf->pkt_count / conf->weight;
+        // Divide by 0 is bad. Assume that lowest possible weight == 1.
+        __u64 weight = conf->weight == 0 ? 1 : conf->weight;    
+        
+        // Simulate division to avoid floating op.
         if (best_index == -1 ||
-            (pkt * best_weight < best_pkt * weight) ||
+            (pkt * best_weight < best_pkt * weight) ||  // ratio = conf->pkt_count / conf->weight;
             (pkt * best_weight == best_pkt * weight && conf->last_used < best_last_used))
         {
             best_index = i;
@@ -144,6 +147,7 @@ int xdp_udp_counter(struct xdp_md *ctx) {
 
     int ret;
     if (udp->dest == __constant_htons(UDP_PORT_PGW_REG)) {
+        /* Handle registration packets */
         ret = register_pgw(val, ip->saddr, udp->source);
         if (ret >= 0)
             bpf_printk("Registered id=%d Payload=%u saddr=%x sport=%u\n", 
@@ -153,14 +157,17 @@ int xdp_udp_counter(struct xdp_md *ctx) {
                 val, __builtin_bswap32(ip->saddr), __builtin_bswap16(udp->source));
         return XDP_DROP;
     } else if (udp->dest != __constant_htons(UDP_PORT)) {
+        /* Allow non GTP pkt to pass */
         return XDP_PASS;
     }
 
+    /* Counting GTP pkt for debugging purpose */
     __u32 key = 0;
     __u64 *value = bpf_map_lookup_elem(&pgw__udp_count_map, &key);
     if (value)
         __sync_fetch_and_add(value, 1);
 
+    /* Who to handle this packet */
     int selected_pgw_id = select_pgw_instance() ;
     if (selected_pgw_id < 0) {
         bpf_printk("Couldn't find best pgw: %d\n", select_pgw_instance);
@@ -172,7 +179,8 @@ int xdp_udp_counter(struct xdp_md *ctx) {
     }
 
     /* 
-     *Change UDP destination and source. No changes on IP header. 
+     * Update the packet headers to respect the requirements.
+     * Change UDP destination and source. No changes on IP header. 
      * Copied from ChatGPT
      */
     __u32 csum = (__u32)~bpf_ntohs(udp->check);

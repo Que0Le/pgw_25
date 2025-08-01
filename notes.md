@@ -1,3 +1,24 @@
+
+## Solution
+The Load-balancer is implemented as an XDP program.
+It intercepts all GTP packets, rewrite UDP header and lets the modified packets go.
+This is because the LB and GWs are binded to the loopback interface.
+
+After registration, contact data of PGWs are stored in ``pgw__instances_list_map`` array map. 
+
+A quick test: `./runme test && ./ldtest -msgNum 100000 -msgRate 1000000 -sgwNum 10 -pgw-weights "11,23,37,41,53,73"`
+
+<video src="demo.mp4" width="90%" controls></video>
+
+## Known problems
+- What Worked:
+    - Max number of LB can be set with `MAX_LENGTH__PGW_INSTANCE`. Default is 4 to make reading from bpf maps less punished.
+- Limitation:
+    - LB doesn't reset/clear maps on startup. Use `./runme test` to remove and start the LB before running the Golang programs.
+    - Edge cases. 
+    - Currently no support for Dynamic PGW registering/deregistering/monitoring.
+    - No userspace program for now.
+
 - I am not sure about the practice of backing-up pointer and value of UDP/IP headers. I know that advancing a pointer makes that pointer proned to be rejected by the verifier, but it seems to be not always the case, at least from my observation.
 
 ## Quick run
@@ -23,6 +44,7 @@ go build ./cmd/ldtest/... && ./ldtest
 # 2025/08/01 01:16:58     Max: 11.2
 
 # Check how the packets are distributed, which gateway registered, which gateway was used last time ...
+# Should run on another terminal.
 python3 parse_pgw_instances_map.py 
 # ID: 0, Weight: 10, IP: 127.0.0.1, Port: 42906, pkt_count: 112, Last Used: 303903384912259, last_seen: 9999
 # ID: 1, Weight: 50, IP: 127.0.0.1, Port: 36560, pkt_count: 555, Last Used: 303903383361258, last_seen: 9999
@@ -51,7 +73,7 @@ Tunnel traffic consisted of UDP encapsulation packets.
 </div>
 
 
-More details of the design:
+More details of the design. The tunnel bypasses most of the network stack.
 <div style="align: left; text-align:center;">
     <img src="./mtx_design_and_workflow.png" alt="" width="80%" />
     <span style="display:block;"></span>
